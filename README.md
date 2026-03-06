@@ -1,87 +1,81 @@
 # VoxelForge
-License: Proprietary
+
+> AI-powered text-to-3D Minecraft structure generator
+
+---
+
+## 📜 License
+
 © 2026 VoxelForge — All rights reserved.
 
 This software and its source code are proprietary.
 No permission is granted to use, copy, modify, or distribute this software without explicit permission.
 
-Overview
+---
+
+## 📖 About
 
 VoxelForge is a desktop application that converts natural language prompts into Minecraft-compatible 3D structures using generative AI.
 
-Users simply describe the structure they want — for example "a medieval castle tower" or "a futuristic observatory" — and VoxelForge generates a 3D model, voxelises it into Minecraft blocks, and exports it as a structure file ready for use in building tools and mods.
+Users can describe a structure in plain text, and the application generates a 3D model, converts it into Minecraft-style voxels, and exports it as a structure file ready to import into Minecraft building tools.
 
-The project aims to make advanced structure creation accessible to everyone, allowing players to generate complex builds without needing any 3D modelling experience.
+The goal of VoxelForge is to make advanced structure creation accessible to everyone by removing the need for manual 3D modelling.
 
-Key Features
+---
 
-Text-to-Structure Generation
-Generate 3D models from simple natural language prompts.
+## ✨ Features
 
-AI-Powered Mesh Generation
-Uses generative AI to create detailed 3D meshes from user input.
+* 🧠 **AI-generated 3D meshes** from text prompts
+* 🧱 **Automatic voxelisation** into Minecraft blocks
+* 🎚 **Adjustable output resolution**
+* 🎨 **Block palette filtering** for different build styles
+* 📦 **Multiple export formats**
 
-Voxelisation Engine
-Converts generated meshes into Minecraft-style voxel blocks.
+Supported export formats:
 
-Configurable Output Resolution
-Control the size and detail of the generated structure.
+* `.schematic`
+* `.schem`
+* `.litematica`
 
-Block Palette Filters
-Restrict blocks to specific categories such as:
+---
 
-Full blocks only
+## ⚙️ How It Works
 
-Non-transparent blocks
+1. Enter a text prompt describing the structure.
+2. The AI system generates a 3D mesh.
+3. The mesh is converted into a voxel grid.
+4. Voxels are mapped to Minecraft blocks.
+5. The structure is exported to a Minecraft-compatible format.
 
-Survival-obtainable blocks
+---
 
-Multiple Export Formats
+## 🖥 Platform Support
 
-.schematic
+VoxelForge is designed as a cross-platform desktop application.
 
-.schem
+Planned support:
 
-.litematica
+* Windows
+* Linux
+* macOS
 
-Preview Before Export
-Inspect the generated model and voxelised structure before saving.
+---
 
-How It Works
-
-Enter a text prompt describing the structure you want.
-
-The AI generation system produces a 3D mesh.
-
-The mesh is voxelised into Minecraft blocks.
-
-The block grid is mapped using the selected block palette.
-
-The structure is exported in your chosen format.
-
-Target Users
-
-VoxelForge is designed for:
-
-Minecraft builders
-
-Creative mode players
-
-Technical builders
-
-Map makers
-
-Anyone who wants to quickly generate structures from ideas
-
-Project Status
+## 🚧 Project Status
 
 VoxelForge is currently under development.
-Features and architecture may change as the project evolves.
+Features and architecture may change as development progresses.
 
-License
+---
 
-License: Proprietary
-© 2026 VoxelForge — All rights reserved.
+## 💬 Contributing
 
-This repository is provided for viewing and feedback purposes only.
-No permission is granted to use, copy, modify, or distribute this software or its source code without explicit permission.
+This repository is public for visibility, feedback, and issue tracking.
+
+Code contributions are not currently accepted without explicit permission from the project owner.
+
+---
+
+## ⚠ Disclaimer
+
+VoxelForge is an independent project and is **not affiliated with Mojang or Minecraft**.
