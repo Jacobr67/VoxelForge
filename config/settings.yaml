@@ -1,0 +1,58 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# VoxelForge — Application Settings
+# config/settings.yaml
+#
+# Edit these values to change the defaults loaded at startup.
+# All values can also be overridden live from the GUI.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── Voxelisation ──────────────────────────────────────────────────────────────
+
+# Number of voxels along the longest axis of the generated structure.
+# Higher = more detail but more blocks and slower export.
+# Recommended range: 32 (fast/coarse) to 128 (detailed). Max: 256.
+voxel_resolution: 64
+
+# Remove interior voxels, keeping only the outer shell.
+# Greatly reduces block count for large structures.
+# Can be toggled per-generation in the GUI.
+hollow: false
+
+
+# ── AI Generation (NVIDIA Trellis) ────────────────────────────────────────────
+
+# Texture resolution for the generated 3D model.
+# Higher values give richer colour detail but increase API response time.
+# Options: 512, 1024, 2048
+texture_resolution: 1024
+
+# How closely the mesh follows the fine geometric details of the prompt.
+# 0.0 = smooth/simplified  |  1.0 = maximum detail
+# Recommended: 0.5
+geometry_fidelity: 0.5
+
+# How closely the surface texture matches the prompt description.
+# 0.0 = smooth/abstract  |  1.0 = highly textured
+# Recommended: 0.5
+surface_fidelity: 0.5
+
+# Random seed for reproducible generation.
+# Set to 0 to use a random seed each time.
+seed: 0
+
+
+# ── GUI ───────────────────────────────────────────────────────────────────────
+
+# qt-material theme name.
+# Dark themes: dark_teal, dark_blue, dark_cyan, dark_amber, dark_red
+# Light themes: light_teal, light_blue, light_cyan
+theme: dark_teal
+
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+# Minimum log level written to the console.
+# File logging always captures DEBUG and above regardless of this setting.
+# Options: DEBUG, INFO, WARNING, ERROR
+log_level: WARNING
