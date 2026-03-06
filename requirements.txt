@@ -1,0 +1,29 @@
+# ── GUI ────────────────────────────────────────────────────────────────────────
+PyQt6==6.7.1
+PyQt6-Qt6==6.7.1
+PyQt6-sip==13.8.0
+qt-material==2.14
+
+# ── 3D Mesh Processing ─────────────────────────────────────────────────────────
+trimesh==4.4.0
+numpy==2.2.0
+scipy==1.15.3                  # Used by trimesh for ray casting
+pyOpenGL==3.1.7               # OpenGL bindings for PyQt6 3D preview
+
+# ── Image / Colour Processing ──────────────────────────────────────────────────
+Pillow==10.4.0                 # Texture sampling & colour math
+
+# ── Minecraft File Formats ─────────────────────────────────────────────────────
+nbtlib==2.0.4                  # NBT serialisation (.schem / .litematica)
+# Note: .schematic (legacy) uses nbtlib with numeric block IDs
+
+# ── API & Networking ───────────────────────────────────────────────────────────
+requests==2.32.3               # HTTP calls to NVIDIA Trellis NIM endpoint
+urllib3==2.2.2
+
+# ── Config & Utilities ─────────────────────────────────────────────────────────
+PyYAML==6.0.2                  # Load config/settings.yaml
+python-dotenv==1.0.1           # Load API key from .env file
+
+# ── Packaging / Distribution ───────────────────────────────────────────────────
+pyinstaller==6.19.0             # Bundle into .exe
