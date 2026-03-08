@@ -52,9 +52,6 @@ def main():
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("VoxelForge")
 
-    # High-DPI support
-    app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
-
     # ── 4. Apply qt-material theme ────────────────────────────────────────────
     try:
         from qt_material import apply_stylesheet

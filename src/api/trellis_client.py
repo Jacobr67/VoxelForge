@@ -8,9 +8,12 @@ mesh bytes ready for the voxeliser pipeline.
 NVIDIA Trellis NIM endpoint:
   POST https://ai.api.nvidia.com/v1/genai/microsoft/trellis
   Auth: Authorization: Bearer <NGC_API_KEY>
+
+Actual response format:
+  {"artifacts": [{"base64": "Z2xURg..."}]}
 """
 
-import io
+import base64
 import time
 import logging
 import requests
@@ -19,12 +22,10 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-TRELLIS_ENDPOINT = "https://ai.api.nvidia.com/v1/genai/microsoft/trellis"
-ASSETS_ENDPOINT  = "https://api.nvcf.nvidia.com/v2/nvcf/assets"
-
-DEFAULT_TIMEOUT      = 30    # seconds per HTTP request
-POLL_INTERVAL        = 3     # seconds between status polls
-MAX_POLL_ATTEMPTS    = 100   # ~5 minutes before giving up
+TRELLIS_ENDPOINT  = "https://ai.api.nvidia.com/v1/genai/microsoft/trellis"
+DEFAULT_TIMEOUT   = 30
+POLL_INTERVAL     = 3
+MAX_POLL_ATTEMPTS = 100
 
 
 # ── Exceptions ─────────────────────────────────────────────────────────────────
@@ -54,18 +55,10 @@ class TrellisClient:
     """
 
     def __init__(self, api_key: str):
-        """
-        Args:
-            api_key: Your NVIDIA NGC API key (starts with 'nvapi-').
-                     Store this in config/api_keys.yaml (never commit it)
-                     or in a .env file as NVIDIA_API_KEY=nvapi-...
-        """
         if not api_key or not api_key.strip():
             raise TrellisAuthError(
-                "No API key provided. Set NVIDIA_API_KEY in your .env file "
-                "or in config/api_keys.yaml."
+                "No API key provided. Set NVIDIA_API_KEY in your .env file."
             )
-
         self._api_key = api_key.strip()
         self._session = requests.Session()
         self._session.headers.update({
@@ -79,25 +72,20 @@ class TrellisClient:
     def generate_from_text(
         self,
         prompt: str,
-        texture_resolution: int = 1024,
-        geometry_fidelity:  float = 0.5,
-        surface_fidelity:   float = 0.5,
-        seed:               int = 0,
+        seed: int = 0,
         on_progress=None,
+        **kwargs,   # absorb unused settings args silently
     ) -> bytes:
         """
-        Generate a 3D mesh from a text prompt and return it as GLB bytes.
+        Generate a 3D mesh from a text prompt and return raw GLB bytes.
 
         Args:
-            prompt:              Natural language description of the structure.
-            texture_resolution:  Output texture size in pixels (512, 1024, 2048).
-            geometry_fidelity:   0.0–1.0. Higher = more geometric detail.
-            surface_fidelity:    0.0–1.0. Higher = more surface detail.
-            seed:                Reproducibility seed. 0 = random.
-            on_progress:         Optional callback(status: str) for UI updates.
+            prompt:      Natural language description of the structure.
+            seed:        Reproducibility seed. 0 = random.
+            on_progress: Optional callback(status: str) for UI updates.
 
         Returns:
-            Raw GLB file bytes. Pass directly to trimesh.load(io.BytesIO(glb_bytes)).
+            Raw GLB file bytes ready for trimesh.load(io.BytesIO(glb_bytes)).
 
         Raises:
             TrellisAuthError:    Invalid or missing API key.
@@ -110,26 +98,18 @@ class TrellisClient:
         logger.info(f"Submitting Trellis job: '{prompt[:60]}...'")
         self._notify(on_progress, "Submitting generation request...")
 
-        # ── 1. Submit the generation job ──────────────────────────────────────
-        payload = {
-            "text_prompts": [{"text": prompt.strip()}],
-            "texture_resolution": texture_resolution,
-            "geometry_fidelity":  geometry_fidelity,
-            "surface_fidelity":   surface_fidelity,
-            "seed": seed,
-        }
+        payload = {"prompt": prompt.strip()}
+        if seed and seed != 0:
+            payload["seed"] = seed
 
         response = self._post(TRELLIS_ENDPOINT, payload)
 
-        # ── 2. Handle synchronous vs async response ───────────────────────────
-        # Trellis NIM returns 200 with GLB directly, or 202 with a polling URL.
         if response.status_code == 200:
-            logger.info("Received synchronous GLB response.")
-            self._notify(on_progress, "Mesh received.")
+            logger.info("Received synchronous response.")
+            self._notify(on_progress, "Mesh received. Processing...")
             return self._extract_glb(response)
 
         if response.status_code == 202:
-            # Async job — poll until complete
             request_id = response.headers.get("NVCF-REQID")
             if not request_id:
                 raise TrellisRequestError(
@@ -144,25 +124,22 @@ class TrellisClient:
 
     def _poll_for_result(self, request_id: str, on_progress) -> bytes:
         """Poll the NVCF status endpoint until the job is done."""
-        status_url = f"https://api.nvcf.nvidia.com/v2/nvcf/pexec/status/{request_id}"
-
+        status_url = (
+            f"https://api.nvcf.nvidia.com/v2/nvcf/pexec/status/{request_id}"
+        )
         for attempt in range(1, MAX_POLL_ATTEMPTS + 1):
-            self._notify(
-                on_progress,
-                f"Generating mesh... ({attempt * POLL_INTERVAL}s)"
-            )
+            self._notify(on_progress, f"Generating mesh... ({attempt * POLL_INTERVAL}s)")
             time.sleep(POLL_INTERVAL)
 
             resp = self._session.get(status_url, timeout=DEFAULT_TIMEOUT)
 
             if resp.status_code == 200:
-                logger.info(f"Job {request_id} complete after {attempt} polls.")
-                self._notify(on_progress, "Mesh received.")
+                logger.info(f"Job complete after {attempt} polls.")
+                self._notify(on_progress, "Mesh received. Processing...")
                 return self._extract_glb(resp)
 
             if resp.status_code == 202:
-                # Still processing — keep polling
-                logger.debug(f"Job {request_id} still processing (poll {attempt}).")
+                logger.debug(f"Still processing (poll {attempt}).")
                 continue
 
             if resp.status_code == 401:
@@ -171,40 +148,68 @@ class TrellisClient:
             self._raise_for_status(resp)
 
         raise TrellisTimeoutError(
-            f"Trellis job {request_id} did not complete after "
+            f"Trellis job did not complete after "
             f"{MAX_POLL_ATTEMPTS * POLL_INTERVAL} seconds."
         )
 
     def _extract_glb(self, response: requests.Response) -> bytes:
         """
         Extract raw GLB bytes from the API response.
-        The NIM endpoint may return binary GLB directly or JSON with a URL.
+
+        NVIDIA Trellis returns:
+            {"artifacts": [{"base64": "Z2xURg..."}]}
+
+        Falls back to handling raw binary and URL-based responses too.
         """
         content_type = response.headers.get("Content-Type", "")
 
-        # Direct binary GLB in response body
+        # ── Format 1: raw binary body ─────────────────────────────────────────
         if "model/gltf-binary" in content_type or "application/octet-stream" in content_type:
+            logger.info("GLB received as raw binary body.")
             return response.content
 
-        # JSON response containing a download URL or base64 asset
+        # ── Format 2: JSON envelope ───────────────────────────────────────────
         if "application/json" in content_type:
             data = response.json()
+            logger.debug(f"Trellis JSON response keys: {list(data.keys())}")
 
-            # URL to download the asset separately
+            # Primary format: {"artifacts": [{"base64": "..."}]}
+            if "artifacts" in data and isinstance(data["artifacts"], list):
+                artifact = data["artifacts"][0]
+                logger.debug(f"Artifact keys: {list(artifact.keys())}")
+
+                if "base64" in artifact:
+                    logger.info("Decoding GLB from artifacts[0].base64")
+                    return base64.b64decode(artifact["base64"])
+
+                if "url" in artifact:
+                    logger.info(f"Fetching GLB from artifacts[0].url")
+                    asset_resp = self._session.get(artifact["url"], timeout=120)
+                    asset_resp.raise_for_status()
+                    return asset_resp.content
+
+            # Fallback: top-level "glb" key (base64)
+            if "glb" in data:
+                logger.info("Decoding GLB from top-level 'glb' key.")
+                return base64.b64decode(data["glb"])
+
+            # Fallback: top-level URL key
             if "glb_url" in data:
-                logger.info("Fetching GLB from asset URL...")
-                asset_resp = self._session.get(data["glb_url"], timeout=60)
+                logger.info("Fetching GLB from top-level 'glb_url'.")
+                asset_resp = self._session.get(data["glb_url"], timeout=120)
                 asset_resp.raise_for_status()
                 return asset_resp.content
 
-            # Direct base64-encoded GLB
-            if "glb" in data:
-                import base64
-                return base64.b64decode(data["glb"])
+            # Nothing matched — log full response for future diagnosis
+            logger.error(
+                f"Could not extract GLB from JSON response.\n"
+                f"Full response (first 2000 chars):\n{str(data)[:2000]}"
+            )
 
         raise TrellisRequestError(
             f"Unrecognised response format from Trellis API. "
-            f"Content-Type: {content_type}"
+            f"Content-Type: {content_type}. "
+            f"Check logs/voxelforge.log for the full response."
         )
 
     def _post(self, url: str, payload: dict) -> requests.Response:
@@ -219,13 +224,11 @@ class TrellisClient:
             raise TrellisRequestError(
                 "Request to NVIDIA API timed out. Try again."
             )
-
         if response.status_code == 401:
             raise TrellisAuthError(
                 "NVIDIA API key is invalid or expired. "
                 "Update NVIDIA_API_KEY in your .env file."
             )
-
         return response
 
     def _raise_for_status(self, response: requests.Response):
@@ -234,7 +237,6 @@ class TrellisClient:
             detail = response.json().get("detail", response.text[:200])
         except Exception:
             detail = response.text[:200]
-
         raise TrellisRequestError(
             f"Trellis API error {response.status_code}: {detail}"
         )
@@ -246,4 +248,4 @@ class TrellisClient:
             try:
                 callback(message)
             except Exception:
-                pass  # Never let a UI callback crash the API thread
+                pass
