@@ -140,9 +140,13 @@ class Preview3D(QOpenGLWidget):
             voxel_grid:  VoxelGrid with .occupied and .face_ids arrays.
             colour_map:  (N, 3) uint8 fallback colours per face.
             block_grid:  Optional (X,Y,Z) array of block ID strings for textures.
+
+        Note: _mode is NOT switched to "voxel" here. It switches inside paintGL
+        only after the VBO is successfully uploaded, so the mesh stays visible
+        right up until the voxel geometry is ready to draw.
         """
         self._pending_voxels = (voxel_grid, colour_map, block_grid)
-        self._mode = "voxel"
+        # Leave _mode as-is ("mesh") — paintGL will switch it after upload
         self.update()
 
     def clear(self):
@@ -184,6 +188,7 @@ class Preview3D(QOpenGLWidget):
         if self._pending_voxels is not None:
             self._upload_voxels(*self._pending_voxels)
             self._pending_voxels = None
+            self._mode = "voxel"  # switch only after VBO is on the GPU
 
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
         GL.glLoadIdentity()

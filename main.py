@@ -44,8 +44,6 @@ def main():
 
     # ── 3. Qt application ─────────────────────────────────────────────────────
     from PyQt6.QtWidgets import QApplication
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtGui import QIcon
 
     app = QApplication(sys.argv)
     app.setApplicationName("VoxelForge")
@@ -55,7 +53,7 @@ def main():
     # ── 4. Apply qt-material theme ────────────────────────────────────────────
     try:
         from qt_material import apply_stylesheet
-        theme = config.get_theme()           # e.g. "dark_teal"
+        theme      = config.get_theme()
         theme_file = f"{theme}.xml"
         apply_stylesheet(app, theme=theme_file)
         logger.info(f"Applied theme: {theme_file}")
