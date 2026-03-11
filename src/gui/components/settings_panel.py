@@ -2,15 +2,15 @@
 src/gui/components/settings_panel.py
 
 Generation settings panel: voxel resolution, texture resolution,
-geometry/surface fidelity sliders, seed input, and hollow toggle.
+seed input, and hollow toggle.
 Exposes a get_settings() method returning a clean dict consumed by
 the generation pipeline.
 """
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QSlider, QSpinBox, QCheckBox, QComboBox,
-    QSizePolicy, QFrame,
+    QLabel, QSpinBox, QCheckBox, QComboBox,
+    QFrame,
 )
 from PyQt6.QtCore import Qt
 
@@ -20,27 +20,7 @@ from PyQt6.QtCore import Qt
 SECTION_LABEL_STYLE = (
     "color: #5a9fd4; font-size: 10px; font-weight: bold; letter-spacing: 2px;"
 )
-VALUE_LABEL_STYLE = "color: #e8e8e8; font-size: 12px; min-width: 36px;"
-ROW_LABEL_STYLE   = "color: #909090; font-size: 12px;"
-
-SLIDER_STYLE = """
-    QSlider::groove:horizontal {
-        height: 4px;
-        background: #2a2a2a;
-        border-radius: 2px;
-    }
-    QSlider::handle:horizontal {
-        background: #5a9fd4;
-        width: 14px;
-        height: 14px;
-        margin: -5px 0;
-        border-radius: 7px;
-    }
-    QSlider::sub-page:horizontal {
-        background: #1e5c8a;
-        border-radius: 2px;
-    }
-"""
+ROW_LABEL_STYLE = "color: #909090; font-size: 12px;"
 
 SPINBOX_STYLE = """
     QSpinBox {
@@ -75,7 +55,7 @@ CHECKBOX_STYLE = """
 
 class SettingsPanel(QWidget):
     """
-    Collapsible settings panel for generation and voxelisation parameters.
+    Settings panel for generation and voxelisation parameters.
     """
 
     def __init__(self, parent=None):
@@ -92,8 +72,6 @@ class SettingsPanel(QWidget):
             {
                 "voxel_resolution":   int,   # 16–256
                 "texture_resolution": int,   # 512 / 1024 / 2048
-                "geometry_fidelity":  float, # 0.0–1.0
-                "surface_fidelity":   float, # 0.0–1.0
                 "seed":               int,   # 0 = random
                 "hollow":             bool,
             }
@@ -101,8 +79,6 @@ class SettingsPanel(QWidget):
         return {
             "voxel_resolution":   self._resolution_spin.value(),
             "texture_resolution": int(self._tex_res_combo.currentText()),
-            "geometry_fidelity":  self._geo_slider.value() / 100.0,
-            "surface_fidelity":   self._surf_slider.value() / 100.0,
             "seed":               self._seed_spin.value(),
             "hollow":             self._hollow_check.isChecked(),
         }
@@ -175,24 +151,8 @@ class SettingsPanel(QWidget):
         self._tex_res_combo.setFixedWidth(80)
         gen_grid.addWidget(self._tex_res_combo, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        # Geometry fidelity
-        gen_grid.addWidget(self._row_label("Geometry"), 1, 0)
-        self._geo_slider, self._geo_value_label = self._make_slider(50)
-        geo_row = QHBoxLayout()
-        geo_row.addWidget(self._geo_slider)
-        geo_row.addWidget(self._geo_value_label)
-        gen_grid.addLayout(geo_row, 1, 1)
-
-        # Surface fidelity
-        gen_grid.addWidget(self._row_label("Surface"), 2, 0)
-        self._surf_slider, self._surf_value_label = self._make_slider(50)
-        surf_row = QHBoxLayout()
-        surf_row.addWidget(self._surf_slider)
-        surf_row.addWidget(self._surf_value_label)
-        gen_grid.addLayout(surf_row, 2, 1)
-
         # Seed
-        gen_grid.addWidget(self._row_label("Seed"), 3, 0)
+        gen_grid.addWidget(self._row_label("Seed"), 1, 0)
         seed_row = QHBoxLayout()
         self._seed_spin = QSpinBox()
         self._seed_spin.setRange(0, 999999)
@@ -202,7 +162,7 @@ class SettingsPanel(QWidget):
         self._seed_spin.setFixedWidth(110)
         seed_row.addWidget(self._seed_spin)
         seed_row.addStretch()
-        gen_grid.addLayout(seed_row, 3, 1)
+        gen_grid.addLayout(seed_row, 1, 1)
 
         layout.addLayout(gen_grid)
         layout.addStretch()
@@ -224,19 +184,3 @@ class SettingsPanel(QWidget):
         line.setFrameShape(QFrame.Shape.HLine)
         line.setStyleSheet("color: #2a2a2a;")
         return line
-
-    def _make_slider(self, default: int = 50):
-        """Create a 0–100 slider with a live value label."""
-        slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setRange(0, 100)
-        slider.setValue(default)
-        slider.setStyleSheet(SLIDER_STYLE)
-
-        value_label = QLabel(f"{default}%")
-        value_label.setStyleSheet(VALUE_LABEL_STYLE)
-        value_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-
-        slider.valueChanged.connect(
-            lambda v, lbl=value_label: lbl.setText(f"{v}%")
-        )
-        return slider, value_label

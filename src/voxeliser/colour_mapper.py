@@ -27,10 +27,10 @@ PALETTE_DIR = Path(__file__).parent.parent.parent / "assets" / "block_palettes"
 @dataclass
 class MinecraftBlock:
     """A single Minecraft block entry from the palette JSON."""
-    id:           str           # e.g. "minecraft:stone"
-    display_name: str           # e.g. "Stone"
-    rgb:          tuple         # (R, G, B) 0-255
-    groups:       list          # e.g. ["full_blocks", "survival_obtainable"]
+    id:           str    # e.g. "minecraft:stone"
+    display_name: str    # e.g. "Stone"
+    rgb:          tuple  # (R, G, B) 0-255
+    groups:       list   # e.g. ["full_blocks", "survival_obtainable"]
 
 
 @dataclass
@@ -43,34 +43,32 @@ class MappedGrid:
         occupied:    (X, Y, Z) bool — which voxels are filled.
         palette:     List of MinecraftBlock entries used.
     """
-    block_grid: np.ndarray      # dtype object (str), shape (X, Y, Z)
-    occupied:   np.ndarray      # bool, shape (X, Y, Z)
-    palette:    list            # List[MinecraftBlock]
+    block_grid: np.ndarray   # dtype object (str), shape (X, Y, Z)
+    occupied:   np.ndarray   # bool, shape (X, Y, Z)
+    palette:    list         # List[MinecraftBlock]
 
 
 # ── Colour space helpers ───────────────────────────────────────────────────────
 
 def _rgb_to_lab(rgb: np.ndarray) -> np.ndarray:
     """
-    Convert (N, 3) uint8 RGB array to CIE LAB colour space.
+    Convert (N, 3) float32 RGB array (values 0-255) to CIE LAB.
     LAB is perceptually uniform so nearest-neighbour gives better
     colour matches than raw Euclidean RGB distance.
     """
-    # Normalise to [0, 1]
     rgb_f = rgb.astype(np.float32) / 255.0
 
-    # Linearise (sRGB gamma removal)
-    mask = rgb_f > 0.04045
+    # Linearise sRGB gamma
+    mask         = rgb_f > 0.04045
     rgb_f[mask]  = ((rgb_f[mask]  + 0.055) / 1.055) ** 2.4
     rgb_f[~mask] = rgb_f[~mask] / 12.92
 
-    # RGB → XYZ (D65 illuminant)
+    # RGB → XYZ (D65)
     M = np.array([
         [0.4124564, 0.3575761, 0.1804375],
         [0.2126729, 0.7151522, 0.0721750],
         [0.0193339, 0.1191920, 0.9503041],
     ], dtype=np.float32)
-
     xyz = rgb_f @ M.T
 
     # Normalise by D65 white point
@@ -78,18 +76,12 @@ def _rgb_to_lab(rgb: np.ndarray) -> np.ndarray:
     xyz[:, 2] /= 1.08883
 
     # XYZ → LAB
-    epsilon = 0.008856
-    kappa   = 903.3
+    eps   = 0.008856
+    kappa = 903.3
 
-    fx = np.where(xyz[:, 0] > epsilon,
-                  xyz[:, 0] ** (1/3),
-                  (kappa * xyz[:, 0] + 16) / 116)
-    fy = np.where(xyz[:, 1] > epsilon,
-                  xyz[:, 1] ** (1/3),
-                  (kappa * xyz[:, 1] + 16) / 116)
-    fz = np.where(xyz[:, 2] > epsilon,
-                  xyz[:, 2] ** (1/3),
-                  (kappa * xyz[:, 2] + 16) / 116)
+    fx = np.where(xyz[:, 0] > eps, xyz[:, 0] ** (1/3), (kappa * xyz[:, 0] + 16) / 116)
+    fy = np.where(xyz[:, 1] > eps, xyz[:, 1] ** (1/3), (kappa * xyz[:, 1] + 16) / 116)
+    fz = np.where(xyz[:, 2] > eps, xyz[:, 2] ** (1/3), (kappa * xyz[:, 2] + 16) / 116)
 
     L = 116 * fy - 16
     a = 500 * (fx - fy)
@@ -109,7 +101,6 @@ class ColourMapper:
         mapped = mapper.map(voxel_grid, processed_mesh.colour_map)
     """
 
-    # Available palette group names (must match JSON filenames in assets/)
     AVAILABLE_GROUPS = [
         "full_blocks",
         "survival_obtainable",
@@ -122,9 +113,8 @@ class ColourMapper:
     def __init__(self, active_groups: Optional[list] = None):
         """
         Args:
-            active_groups: List of palette group names to include.
-                           If None, all groups are used.
-                           The active palette is the UNION of all selected groups.
+            active_groups: Palette group names to include.
+                           None = all groups. Active palette is their union.
         """
         if active_groups is None:
             active_groups = self.AVAILABLE_GROUPS
@@ -133,14 +123,17 @@ class ColourMapper:
         if invalid:
             raise ValueError(
                 f"Unknown palette groups: {invalid}. "
-                f"Valid groups: {self.AVAILABLE_GROUPS}"
+                f"Valid: {self.AVAILABLE_GROUPS}"
             )
 
         self.active_groups = active_groups
         self._palette: list[MinecraftBlock] = []
-        self._palette_lab: Optional[np.ndarray] = None  # (M, 3) LAB
+        self._palette_lab: Optional[np.ndarray] = None   # (M, 3)
+        self._palette_ids: Optional[np.ndarray] = None   # (M,) object array of str
 
         self._load_palette()
+
+    # ── Public API ─────────────────────────────────────────────────────────────
 
     def map(self, voxel_grid, colour_map: np.ndarray) -> MappedGrid:
         """
@@ -148,8 +141,7 @@ class ColourMapper:
 
         Args:
             voxel_grid:  VoxelGrid from Voxeliser.voxelise().
-            colour_map:  (N_faces, 3) uint8 array from ProcessedMesh.colour_map.
-                         Maps face_id → RGB colour.
+            colour_map:  (N_faces, 3) uint8 array — face_id → RGB colour.
 
         Returns:
             MappedGrid with per-voxel block ID strings.
@@ -159,46 +151,52 @@ class ColourMapper:
                 "No blocks loaded in palette. Check assets/block_palettes/."
             )
 
-        res = voxel_grid.resolution
+        res      = voxel_grid.resolution
         occupied = voxel_grid.occupied
         face_ids = voxel_grid.face_ids
 
         logger.info(
-            f"Mapping {occupied.sum():,} voxels to Minecraft blocks "
-            f"(palette size: {len(self._palette)} blocks)..."
+            f"Mapping {occupied.sum():,} voxels → "
+            f"{len(self._palette)} palette blocks..."
         )
 
-        # ── 1. Gather unique face IDs used in occupied voxels ─────────────────
-        occ_mask    = occupied
-        used_faces  = face_ids[occ_mask]         # (V,) int32
+        # ── 1. Unique face IDs used by occupied voxels ────────────────────────
+        used_faces  = face_ids[occupied]                      # (V,)
         unique_fids = np.unique(used_faces)
         unique_fids = unique_fids[unique_fids >= 0]
 
-        # ── 2. Look up RGB for each unique face ───────────────────────────────
-        face_rgb = colour_map[unique_fids]        # (U, 3) uint8
-
-        # ── 3. Convert face colours to LAB ────────────────────────────────────
-        face_lab = _rgb_to_lab(face_rgb.astype(np.float32))
-
-        # ── 4. Nearest-neighbour search in LAB space ──────────────────────────
-        # For each face colour, find the closest palette block
-        block_indices = self._nearest_block(face_lab)  # (U,) int
-
-        # Build face_id → block_index lookup
-        fid_to_block = {
-            int(fid): block_indices[i]
-            for i, fid in enumerate(unique_fids)
-        }
-
-        # ── 5. Fill output block grid ─────────────────────────────────────────
         block_grid = np.full((res, res, res), "air", dtype=object)
 
-        xs, ys, zs = np.where(occ_mask)
-        for x, y, z in zip(xs, ys, zs):
-            fid = int(face_ids[x, y, z])
-            if fid in fid_to_block:
-                block_idx  = fid_to_block[fid]
-                block_grid[x, y, z] = self._palette[block_idx].id
+        if len(unique_fids) == 0:
+            logger.warning(
+                "No occupied voxels with valid face IDs — "
+                "voxelisation may have failed (check rtree / pyembree install)."
+            )
+            return MappedGrid(
+                block_grid=block_grid,
+                occupied=occupied,
+                palette=self._palette,
+            )
+
+        # ── 2. RGB → LAB for each unique face colour ──────────────────────────
+        face_rgb = colour_map[unique_fids].astype(np.float32)  # (U, 3)
+        face_lab = _rgb_to_lab(face_rgb)                       # (U, 3)
+
+        # ── 3. Nearest-neighbour match in LAB space ───────────────────────────
+        block_indices = self._nearest_block(face_lab)          # (U,) int
+
+        # ── 4. Build face_id → block_id lookup array ──────────────────────────
+        max_fid      = int(unique_fids.max()) + 1
+        fid_to_block = np.full(max_fid, "air", dtype=object)
+        fid_to_block[unique_fids] = self._palette_ids[block_indices]
+
+        # ── 5. Fill block grid — fully vectorised ─────────────────────────────
+        xs, ys, zs = np.where(occupied)
+        fids       = face_ids[xs, ys, zs]                      # (V,)
+
+        valid_mask = (fids >= 0) & (fids < max_fid)
+        block_grid[xs[valid_mask], ys[valid_mask], zs[valid_mask]] = \
+            fid_to_block[fids[valid_mask]]
 
         logger.info("Colour mapping complete.")
 
@@ -214,9 +212,9 @@ class ColourMapper:
 
     # ── Private helpers ────────────────────────────────────────────────────────
 
-    def _load_palette(self):
+    def _load_palette(self) -> None:
         """Load and merge all active palette group JSON files."""
-        seen_ids = set()
+        seen_ids: set[str] = set()
 
         for group in self.active_groups:
             json_path = PALETTE_DIR / f"{group}.json"
@@ -239,15 +237,13 @@ class ColourMapper:
                 block_id = entry.get("id", "")
                 if not block_id or block_id in seen_ids:
                     continue
-
                 try:
-                    block = MinecraftBlock(
+                    self._palette.append(MinecraftBlock(
                         id=block_id,
                         display_name=entry.get("display_name", block_id),
                         rgb=tuple(entry["rgb"]),
                         groups=entry.get("groups", [group]),
-                    )
-                    self._palette.append(block)
+                    ))
                     seen_ids.add(block_id)
                 except (KeyError, TypeError) as e:
                     logger.warning(f"Skipping malformed block entry {entry}: {e}")
@@ -259,30 +255,20 @@ class ColourMapper:
             )
             return
 
-        # Pre-compute LAB values for all palette blocks
-        palette_rgb = np.array(
-            [b.rgb for b in self._palette], dtype=np.float32
-        )
-        self._palette_lab = _rgb_to_lab(palette_rgb)
+        palette_rgb        = np.array([b.rgb for b in self._palette], dtype=np.float32)
+        self._palette_lab  = _rgb_to_lab(palette_rgb)
+        self._palette_ids  = np.array([b.id for b in self._palette], dtype=object)
 
         logger.info(
-            f"Loaded {len(self._palette)} blocks from groups: "
-            f"{self.active_groups}"
+            f"Loaded {len(self._palette)} blocks from groups: {self.active_groups}"
         )
 
     def _nearest_block(self, query_lab: np.ndarray) -> np.ndarray:
         """
-        For each query colour (N, 3 LAB), return the index of the closest
-        palette block using Euclidean distance in LAB space.
-
-        Args:
-            query_lab: (N, 3) float32 LAB colours to match.
-
-        Returns:
-            (N,) int array of palette indices.
+        For each query colour (N, 3 LAB), return the palette index of the
+        closest block by Euclidean distance in LAB space.
         """
-        # Compute pairwise distances: (N, M)
-        # Using broadcasting: expand dims to (N, 1, 3) - (1, M, 3) → (N, M, 3)
+        # (N, 1, 3) - (1, M, 3) → (N, M, 3) → (N, M) → (N,)
         diff = query_lab[:, np.newaxis, :] - self._palette_lab[np.newaxis, :, :]
-        dist = np.sqrt((diff ** 2).sum(axis=2))   # (N, M)
-        return dist.argmin(axis=1)                # (N,)
+        dist = (diff ** 2).sum(axis=2)   # skip sqrt — argmin is the same
+        return dist.argmin(axis=1)

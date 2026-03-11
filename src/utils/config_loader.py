@@ -31,8 +31,6 @@ _SETTINGS_FILE = _PROJECT_ROOT / "config" / "settings.yaml"
 _DEFAULTS: dict[str, Any] = {
     "voxel_resolution":   64,
     "texture_resolution": 1024,
-    "geometry_fidelity":  0.5,
-    "surface_fidelity":   0.5,
     "seed":               0,
     "hollow":             False,
     "log_level":          "WARNING",

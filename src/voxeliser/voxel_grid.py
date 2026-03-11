@@ -1,21 +1,20 @@
 """
 src/voxeliser/voxel_grid.py
 
-Converts a ProcessedMesh into a 3D voxel grid using ray casting.
-Each occupied voxel stores its face index so the colour mapper can
-look up which Minecraft block to assign.
+Converts a ProcessedMesh into a 3D voxel grid using trimesh's built-in
+surface voxelization. This approach has no optional dependencies (no rtree,
+no pyembree) and is reliable across all platforms.
 
-Ray casting approach:
-  For each XZ column in the grid, fire a ray downward along Y.
-  Count intersections with the mesh surface — odd count means inside,
-  even means outside (Jordan curve theorem extended to 3D).
-  This correctly fills solid interiors and handles complex geometry.
+Voxelisation approach:
+  trimesh.voxel.creation.voxelize_surface() casts rays along all three
+  axes and fills the surface shell. The interior is then flood-filled using
+  scipy binary_fill_holes so solid meshes come out solid, not hollow shells.
+  Per-voxel face IDs are assigned by nearest-face lookup after voxelisation.
 """
 
 import logging
 import numpy as np
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +30,13 @@ class VoxelGrid:
 
     Attributes:
         occupied:    (X, Y, Z) bool array — True where a voxel is filled.
-        face_ids:    (X, Y, Z) int32 array — face index of the mesh face
-                     that determined this voxel's colour. -1 = empty.
-        resolution:  The grid dimension (e.g. 64 → 64×64×64 grid).
-        voxel_size:  World-space size of one voxel (after normalisation).
+        face_ids:    (X, Y, Z) int32 array — nearest face index per voxel.
+                     Used by ColourMapper to assign block colours. -1 = empty.
+        resolution:  Grid dimension (e.g. 64 -> 64x64x64).
+        voxel_size:  World-space size of one voxel.
     """
-    occupied:   np.ndarray          # (X, Y, Z) bool
-    face_ids:   np.ndarray          # (X, Y, Z) int32
+    occupied:   np.ndarray   # (X, Y, Z) bool
+    face_ids:   np.ndarray   # (X, Y, Z) int32
     resolution: int
     voxel_size: float
 
@@ -52,140 +51,105 @@ class VoxelGrid:
 
 class Voxeliser:
     """
-    Converts a ProcessedMesh into a VoxelGrid using ray casting.
+    Converts a ProcessedMesh into a VoxelGrid using trimesh voxelization.
 
     Usage:
         voxeliser = Voxeliser(resolution=64)
         grid = voxeliser.voxelise(processed_mesh)
     """
 
-    # Sensible resolution limits to protect against accidental huge grids
     MIN_RESOLUTION = 16
     MAX_RESOLUTION = 256
 
     def __init__(self, resolution: int = 64):
-        """
-        Args:
-            resolution: Number of voxels along each axis (cube grid).
-                        E.g. 64 → 64×64×64 = 262,144 voxels max.
-                        Maps directly to the Minecraft block count on
-                        the longest axis of the structure.
-        """
         if not (self.MIN_RESOLUTION <= resolution <= self.MAX_RESOLUTION):
             raise ValueError(
-                f"Resolution must be between {self.MIN_RESOLUTION} and "
+                f"Resolution must be {self.MIN_RESOLUTION}-"
                 f"{self.MAX_RESOLUTION}. Got: {resolution}"
             )
         self.resolution = resolution
 
     def voxelise(self, processed_mesh) -> VoxelGrid:
         """
-        Voxelise a ProcessedMesh using ray casting.
+        Voxelise a ProcessedMesh using trimesh surface voxelization.
 
         Args:
             processed_mesh: A ProcessedMesh from MeshProcessor.load_glb().
+                            Mesh must be normalised to unit cube [-0.5, 0.5]^3.
 
         Returns:
             VoxelGrid with occupied voxels and per-voxel face IDs.
 
         Raises:
-            VoxelisationError: If voxelisation fails.
+            VoxelisationError: If voxelisation fails or produces 0 voxels.
         """
+        from scipy.ndimage import binary_fill_holes
+
         mesh = processed_mesh.mesh
         res  = self.resolution
 
-        logger.info(
-            f"Voxelising mesh at resolution {res}³ "
-            f"({res**3:,} voxels max)..."
-        )
+        logger.info(f"Voxelising {res}^3 ({res**3:,} voxels max)...")
 
-        # ── 1. Build voxel grid coordinate system ─────────────────────────────
-        # Mesh is normalised to unit cube [-0.5, 0.5]³
-        # We map this to voxel indices [0, res)
         voxel_size = 1.0 / res
 
-        # Voxel centre positions along each axis
-        coords = np.linspace(-0.5 + voxel_size / 2,
-                              0.5 - voxel_size / 2,
-                              res)
-
-        # ── 2. Initialise output arrays ───────────────────────────────────────
-        occupied = np.zeros((res, res, res), dtype=bool)
-        face_ids = np.full((res, res, res), -1, dtype=np.int32)
-
-        # ── 3. Build ray intersection engine ─────────────────────────────────
+        # ---- 1. Surface voxelization via trimesh ----------------------------
+        # mesh.voxelized() uses trimesh's own ray casting with no rtree dep.
+        # pitch = world-space edge length of one voxel.
         try:
-            intersector = mesh.ray
+            vox = mesh.voxelized(pitch=voxel_size)
         except Exception as e:
-            raise VoxelisationError(
-                f"Could not initialise ray intersector: {e}"
-            ) from e
+            raise VoxelisationError(f"trimesh voxelization failed: {e}") from e
 
-        # ── 4. Ray cast: for each XZ column, fire ray along +Y ───────────────
-        # Ray origins: just below the mesh bottom (-0.5 - epsilon)
-        ray_origin_y = -0.5 - 0.01
-        ray_direction = np.array([0.0, 1.0, 0.0])
+        # ---- 2. Convert sparse result to dense boolean grid -----------------
+        try:
+            surface = vox.matrix.astype(bool)   # (Nx, Ny, Nz)
+        except Exception as e:
+            raise VoxelisationError(f"Could not extract voxel matrix: {e}") from e
 
-        total_columns = res * res
-        logged_pct = 0
+        # ---- 3. Flood-fill interior ------------------------------------------
+        # voxelized() gives surface shell only; fill_holes makes it solid.
+        filled = binary_fill_holes(surface)   # (Nx, Ny, Nz) bool
 
-        for xi, x in enumerate(coords):
-            for zi, z in enumerate(coords):
+        # ---- 4. Paste into target (res, res, res) grid -----------------------
+        # trimesh may return a slightly different grid size depending on pitch
+        # rounding. We align by extracting the translation from vox.transform.
+        # In trimesh 4.x VoxelGrid.transform is a 4x4 matrix; the origin
+        # (world coords of voxel index [0,0,0]) is its translation column.
+        occupied = np.zeros((res, res, res), dtype=bool)
 
-                # Progress logging every 25%
-                col_idx = xi * res + zi
-                pct = int(100 * col_idx / total_columns)
-                if pct >= logged_pct + 25:
-                    logger.info(f"  Voxelising... {pct}%")
-                    logged_pct = pct
+        try:
+            origin = np.array(vox.transform[:3, 3])   # trimesh 4.x
+        except AttributeError:
+            origin = np.array(vox.origin)             # older trimesh fallback
+        offset = np.round((origin + 0.5) / voxel_size).astype(int)  # (3,)
 
-                ray_origin = np.array([[x, ray_origin_y, z]])
-                ray_dir    = np.array([[0.0, 1.0, 0.0]])
+        nx, ny, nz = filled.shape
+        x0 = max(0, offset[0]);  x1 = min(res, offset[0] + nx)
+        y0 = max(0, offset[1]);  y1 = min(res, offset[1] + ny)
+        z0 = max(0, offset[2]);  z1 = min(res, offset[2] + nz)
 
-                try:
-                    locations, index_ray, index_tri = \
-                        intersector.intersects_location(
-                            ray_origins=ray_origin,
-                            ray_directions=ray_dir,
-                            multiple_hits=True,
-                        )
-                except Exception:
-                    continue  # Skip degenerate columns
+        sx0 = max(0, -offset[0]); sx1 = sx0 + (x1 - x0)
+        sy0 = max(0, -offset[1]); sy1 = sy0 + (y1 - y0)
+        sz0 = max(0, -offset[2]); sz1 = sz0 + (z1 - z0)
 
-                if len(locations) == 0:
-                    continue
+        if x1 > x0 and y1 > y0 and z1 > z0:
+            occupied[x0:x1, y0:y1, z0:z1] = filled[sx0:sx1, sy0:sy1, sz0:sz1]
 
-                # Sort intersections by Y
-                sort_order  = np.argsort(locations[:, 1])
-                hit_ys      = locations[sort_order, 1]
-                hit_faces   = index_tri[sort_order]
-
-                # Jordan curve: pair up intersections → inside spans
-                # Each pair (hit_ys[i], hit_ys[i+1]) is an inside region
-                for pair_start in range(0, len(hit_ys) - 1, 2):
-                    y_enter = hit_ys[pair_start]
-                    y_exit  = hit_ys[pair_start + 1]
-                    face_in = hit_faces[pair_start]
-
-                    # Find voxel indices in this Y span
-                    yi_enter = max(0, int((y_enter + 0.5) / voxel_size))
-                    yi_exit  = min(res, int((y_exit  + 0.5) / voxel_size) + 1)
-
-                    occupied[xi, yi_enter:yi_exit, zi] = True
-                    face_ids[xi, yi_enter:yi_exit, zi] = face_in
-
-                # Also mark surface voxels from all hits
-                for hit_y, hit_face in zip(hit_ys, hit_faces):
-                    yi = int((hit_y + 0.5) / voxel_size)
-                    yi = max(0, min(res - 1, yi))
-                    occupied[xi, yi, zi] = True
-                    face_ids[xi, yi, zi] = hit_face
-
+        n_filled = int(occupied.sum())
         logger.info(
             f"Voxelisation complete. "
-            f"Filled voxels: {occupied.sum():,} / {res**3:,} "
-            f"({100 * occupied.sum() / res**3:.1f}%)"
+            f"{n_filled:,} / {res**3:,} voxels filled "
+            f"({100 * n_filled / res**3:.1f}%)"
         )
+
+        if n_filled == 0:
+            raise VoxelisationError(
+                "Voxelisation produced 0 filled voxels. "
+                "The mesh may be degenerate or too small for this resolution."
+            )
+
+        # ---- 5. Assign face IDs via KD-tree on face centroids ---------------
+        face_ids = self._assign_face_ids(mesh, occupied, voxel_size)
 
         return VoxelGrid(
             occupied=occupied,
@@ -197,7 +161,6 @@ class Voxeliser:
     def hollow(self, grid: VoxelGrid, shell_thickness: int = 1) -> VoxelGrid:
         """
         Remove interior voxels, keeping only the outer shell.
-        Useful for large structures to reduce block count in Minecraft.
 
         Args:
             grid:            The filled VoxelGrid to hollow.
@@ -208,25 +171,16 @@ class Voxeliser:
         """
         from scipy.ndimage import binary_erosion
 
-        logger.info(
-            f"Hollowing grid (shell thickness: {shell_thickness})..."
-        )
+        logger.info(f"Hollowing (shell thickness: {shell_thickness})...")
 
-        # Erode the filled grid — anything that survives erosion is interior
-        interior = binary_erosion(
-            grid.occupied,
-            iterations=shell_thickness,
-        )
-
-        # Shell = filled minus interior
+        interior       = binary_erosion(grid.occupied, iterations=shell_thickness)
         shell_occupied = grid.occupied & ~interior
         shell_face_ids = grid.face_ids.copy()
         shell_face_ids[interior] = -1
 
-        removed = int(interior.sum())
         logger.info(
-            f"Hollowing removed {removed:,} interior voxels. "
-            f"Shell voxels: {shell_occupied.sum():,}"
+            f"Removed {int(interior.sum()):,} interior voxels. "
+            f"Shell: {shell_occupied.sum():,} voxels."
         )
 
         return VoxelGrid(
@@ -235,3 +189,42 @@ class Voxeliser:
             resolution=grid.resolution,
             voxel_size=grid.voxel_size,
         )
+
+    # ---- Private -------------------------------------------------------------
+
+    def _assign_face_ids(
+        self,
+        mesh,
+        occupied: np.ndarray,
+        voxel_size: float,
+    ) -> np.ndarray:
+        """
+        For every occupied voxel, find the nearest mesh face centroid and
+        store that face index. ColourMapper uses this to look up the colour.
+
+        Uses scipy cKDTree over face centroids — no rtree required.
+        """
+        from scipy.spatial import cKDTree
+
+        res      = occupied.shape[0]
+        face_ids = np.full((res, res, res), -1, dtype=np.int32)
+
+        xs, ys, zs = np.where(occupied)
+        vox_centres = np.column_stack([
+            (xs + 0.5) * voxel_size - 0.5,
+            (ys + 0.5) * voxel_size - 0.5,
+            (zs + 0.5) * voxel_size - 0.5,
+        ])  # (V, 3)
+
+        face_centroids = mesh.triangles_center   # (F, 3)
+
+        logger.info(
+            f"Assigning face IDs: {len(xs):,} voxels, "
+            f"{len(face_centroids):,} faces via KD-tree..."
+        )
+
+        tree           = cKDTree(face_centroids)
+        _, nearest_idx = tree.query(vox_centres, workers=-1)
+
+        face_ids[xs, ys, zs] = nearest_idx.astype(np.int32)
+        return face_ids

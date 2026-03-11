@@ -7,7 +7,7 @@ qt-material==2.14
 # ── 3D Mesh Processing ─────────────────────────────────────────────────────────
 trimesh==4.4.0
 numpy==2.2.0
-scipy==1.15.3                  # Used by trimesh for ray casting
+scipy==1.15.3                  # Voxel fill holes, KD-tree face lookup, hollowing
 pyOpenGL==3.1.7               # OpenGL bindings for PyQt6 3D preview
 
 # ── Image / Colour Processing ──────────────────────────────────────────────────

@@ -23,16 +23,6 @@ hollow: false
 # Options: 512, 1024, 2048
 texture_resolution: 1024
 
-# How closely the mesh follows the fine geometric details of the prompt.
-# 0.0 = smooth/simplified  |  1.0 = maximum detail
-# Recommended: 0.5
-geometry_fidelity: 0.5
-
-# How closely the surface texture matches the prompt description.
-# 0.0 = smooth/abstract  |  1.0 = highly textured
-# Recommended: 0.5
-surface_fidelity: 0.5
-
 # Random seed for reproducible generation.
 # Set to 0 to use a random seed each time.
 seed: 0

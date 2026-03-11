@@ -81,9 +81,6 @@ class GenerationWorker(QObject):
         client   = TrellisClient(api_key=api_key)
         glb_bytes = client.generate_from_text(
             prompt             = self.prompt,
-            texture_resolution = self.settings["texture_resolution"],
-            geometry_fidelity  = self.settings["geometry_fidelity"],
-            surface_fidelity   = self.settings["surface_fidelity"],
             seed               = self.settings["seed"],
             on_progress        = self.progress.emit,
         )
@@ -374,9 +371,10 @@ class MainWindow(QMainWindow):
         worker.error.connect(self._on_pipeline_error)
         thread.started.connect(worker.run)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_gen_thread_finished)
 
         self._gen_thread  = thread
-        self._gen_worker  = worker   # keep reference
+        self._gen_worker  = worker   # keep reference alive until thread ends
         thread.start()
 
     def _on_pipeline_progress(self, message: str):
@@ -429,6 +427,7 @@ class MainWindow(QMainWindow):
         worker.error.connect(self._on_export_error)
         thread.started.connect(worker.run)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_exp_thread_finished)
 
         self._exp_thread = thread
         self._exp_worker = worker
@@ -447,6 +446,16 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage(f"Export error: {message}")
 
     # ── Helpers ────────────────────────────────────────────────────────────────
+
+    def _on_gen_thread_finished(self):
+        """Null out gen thread/worker references so the next generation can start."""
+        self._gen_thread = None
+        self._gen_worker = None
+
+    def _on_exp_thread_finished(self):
+        """Null out export thread/worker references so the next export can start."""
+        self._exp_thread = None
+        self._exp_worker = None
 
     def _set_preview_label(self, text: str, colour: str = "#2a2a2a"):
         self._preview_label.setText(text)
