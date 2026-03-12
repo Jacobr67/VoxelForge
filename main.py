@@ -2,16 +2,17 @@
 main.py — VoxelForge entry point
 
 Boots the PyQt6 application, applies the qt-material theme, and
-launches the main window. All heavy work happens on background threads
-inside MainWindow — this file stays deliberately thin.
+launches the main window with a branded splash screen.
 
 Usage:
     python main.py
-    python main.py --debug     # enables DEBUG console logging
+    python main.py --debug         # enables DEBUG console logging
+    python main.py --debugsplash   # show splash only (UI debug mode)
 """
 
 import sys
 import argparse
+from src.gui.splash_screen import SplashScreen
 
 
 def parse_args():
@@ -24,6 +25,13 @@ def parse_args():
         action="store_true",
         help="Enable DEBUG level console logging.",
     )
+
+    parser.add_argument(
+        "--debugsplash",
+        action="store_true",
+        help="Launch only the splash screen for UI debugging.",
+    )
+
     return parser.parse_args()
 
 
@@ -44,6 +52,7 @@ def main():
 
     # ── 3. Qt application ─────────────────────────────────────────────────────
     from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtCore import QTimer
 
     app = QApplication(sys.argv)
     app.setApplicationName("VoxelForge")
@@ -53,7 +62,7 @@ def main():
     # ── 4. Apply qt-material theme ────────────────────────────────────────────
     try:
         from qt_material import apply_stylesheet
-        theme      = config.get_theme()
+        theme = config.get_theme()
         theme_file = f"{theme}.xml"
         apply_stylesheet(app, theme=theme_file)
         logger.info(f"Applied theme: {theme_file}")
@@ -63,12 +72,33 @@ def main():
             "Falling back to default Qt style."
         )
 
-    # ── 5. Launch main window ─────────────────────────────────────────────────
+    # ── 5. Show splash screen ─────────────────────────────────────────────────
+    splash = SplashScreen()
+    splash.show()
+
+    # Force Qt to draw splash immediately
+    app.processEvents()
+
+    # ── DEBUG SPLASH MODE ─────────────────────────────────────────────────────
+    if args.debugsplash:
+        logger.info("Running in splash debug mode.")
+        logger.info("Splash will stay open until Ctrl+C is pressed.")
+        exit_code = app.exec()
+        sys.exit(exit_code)
+
+    # ── 6. Create main window ─────────────────────────────────────────────────
     from src.gui.main_window import MainWindow
     window = MainWindow()
-    window.show()
 
-    logger.info("Main window displayed. Entering event loop.")
+    # Function to finish startup
+    def finish_startup():
+        splash.close()
+        window.show()
+        logger.info("Main window displayed. Entering event loop.")
+
+    # Give splash a small visible duration for polish
+    QTimer.singleShot(1500, finish_startup)
+
     exit_code = app.exec()
 
     logger.info(f"VoxelForge exiting with code {exit_code}.")
